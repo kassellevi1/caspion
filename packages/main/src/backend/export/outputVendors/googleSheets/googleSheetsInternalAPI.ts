@@ -1,5 +1,4 @@
 import { google, type Auth, type drive_v3 as driveV3 } from 'googleapis';
-import _ from 'lodash';
 
 export type OAuth2Client = Auth.OAuth2Client;
 export type Credentials = Auth.Credentials;
@@ -32,19 +31,53 @@ export async function appendToSpreadsheet(
   return result;
 }
 
-export async function getExistingHashes(
+export interface SheetRow {
+  rowIndex: number; // 0-based, including the header row
+  hash: string;
+  status: string;
+}
+
+export async function getExistingRows(
   spreadsheetId: string,
   sheetName: string,
   auth: OAuth2Client,
   hashColumn = 'G',
-) {
-  const result = await sheets.spreadsheets.values.get({
+  statusColumn = 'M',
+): Promise<SheetRow[]> {
+  const result = await sheets.spreadsheets.values.batchGet({
     auth,
     spreadsheetId,
-    range: `${sheetName}!${hashColumn}:${hashColumn}`,
+    ranges: [`${sheetName}!${hashColumn}:${hashColumn}`, `${sheetName}!${statusColumn}:${statusColumn}`],
   });
-  const existingHashes: string[] = _.flatten(result.data.values);
-  return existingHashes;
+  // One entry per row; empty cells come back as empty arrays, so don't flatten (it would shift the row indexes)
+  const [hashes = [], statuses = []] = (result.data.valueRanges ?? []).map(({ values }) =>
+    (values ?? []).map((row) => String(row[0] ?? '')),
+  );
+  return hashes.map((hash, rowIndex) => ({ rowIndex, hash, status: statuses[rowIndex] ?? '' }));
+}
+
+export async function updateCells(
+  spreadsheetId: string,
+  data: { range: string; values: unknown[][] }[],
+  auth: OAuth2Client,
+) {
+  return sheets.spreadsheets.values.batchUpdate({
+    auth,
+    spreadsheetId,
+    requestBody: { valueInputOption: 'USER_ENTERED', data },
+  });
+}
+
+export async function deleteRows(spreadsheetId: string, sheetId: number, rowIndexes: number[], auth: OAuth2Client) {
+  // Delete from the bottom up so earlier deletions don't shift the indexes of later ones
+  const requests = [...rowIndexes]
+    .sort((a, b) => b - a)
+    .map((rowIndex) => ({
+      deleteDimension: {
+        range: { sheetId, dimension: 'ROWS', startIndex: rowIndex, endIndex: rowIndex + 1 },
+      },
+    }));
+  return sheets.spreadsheets.batchUpdate({ auth, spreadsheetId, requestBody: { requests } });
 }
 
 export type Spreadsheet = Pick<driveV3.Schema$File, 'id' | 'name'>;

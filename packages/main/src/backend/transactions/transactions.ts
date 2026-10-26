@@ -5,7 +5,7 @@ import { compareObjectsByDate } from './dates';
 
 const { uniq } = _;
 
-const unifyHash = (hash: string) =>
+export const unifyHash = (hash: string) =>
   hash
     .replace(/`/g, "'")
     .replace(/00\dZ/, '000Z') // Leumi: Last part of the date is sometimes 000Z, 002Z, 003Z...

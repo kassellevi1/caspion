@@ -28,7 +28,6 @@ import { createOperationLogger, type OperationLogger } from '/@/logging/operatio
 type ScrapingConfig = Config['scraping'];
 
 const DEFAULT_MAX_CONCURRENCY = 3;
-const TRANSACTION_STATUS_COMPLETED = 'completed';
 
 export async function scrapeFinancialAccountsAndFetchTransactions(
   scrapingConfig: ScrapingConfig,
@@ -248,14 +247,13 @@ async function postProcessTransactions(
   scrapeResult: ScraperScrapingResult,
 ): Promise<EnrichedTransaction[]> {
   if (scrapeResult.accounts) {
-    let transactions = scrapeResult.accounts.flatMap((transactionAccount) => {
+    const transactions = scrapeResult.accounts.flatMap((transactionAccount) => {
       return transactionAccount.txns.map((transaction) =>
         enrichTransaction(transaction, accountToScrape.key, transactionAccount.accountNumber),
       );
     });
 
-    // Filter out pending transactions
-    transactions = transactions.filter((transaction) => transaction.status === TRANSACTION_STATUS_COMPLETED);
+    // Pending transactions are kept here; exporters that don't support them filter them out on export
     transactions.sort(transactionsDateComparator);
     return transactions;
   }

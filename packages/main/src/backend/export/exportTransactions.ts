@@ -17,6 +17,8 @@ import { createOperationLogger, type OperationLogger } from '/@/logging/operatio
 
 type ExecutionResult = Partial<Record<OutputVendorName, ExportTransactionsResult>>;
 
+const TRANSACTION_STATUS_COMPLETED = 'completed';
+
 export async function createTransactionsInExternalVendors(
   outputVendorsConfig: Config['outputVendors'],
   companyIdToTransactions: Record<string, EnrichedTransaction[]>,
@@ -29,6 +31,9 @@ export async function createTransactionsInExternalVendors(
   await eventPublisher.emit(EventNames.EXPORT_PROCESS_START);
   const executionResult: ExecutionResult = {};
   const allTransactions = _.flatten(Object.values(companyIdToTransactions));
+  const completedTransactions = allTransactions.filter(
+    (transaction) => transaction.status === TRANSACTION_STATUS_COMPLETED,
+  );
 
   const activeExporters = outputVendors.filter((outputVendor) => outputVendorsConfig[outputVendor.name]?.active);
 
@@ -51,6 +56,7 @@ export async function createTransactionsInExternalVendors(
 
   const exportPromises = activeExporters.map(async (outputVendor) => {
     const exporterStartTime = Date.now();
+    const transactionsToCreate = outputVendor.supportsPendingTransactions ? allTransactions : completedTransactions;
     const baseEvent = {
       exporterName: outputVendor.name,
       allTransactions,
@@ -63,7 +69,7 @@ export async function createTransactionsInExternalVendors(
     try {
       const exportTransactionsResult = await outputVendor.exportTransactions(
         {
-          transactionsToCreate: allTransactions,
+          transactionsToCreate,
           startDate,
           outputVendorsConfig,
         },
@@ -73,7 +79,7 @@ export async function createTransactionsInExternalVendors(
       log.info('EXPORTER_SUCCESS', {
         exporter: outputVendor.name,
         exported: exportTransactionsResult.exportedTransactionsNum,
-        skipped: allTransactions.length - exportTransactionsResult.exportedTransactionsNum,
+        skipped: transactionsToCreate.length - exportTransactionsResult.exportedTransactionsNum,
         duration: `${Date.now() - exporterStartTime}ms`,
       });
 

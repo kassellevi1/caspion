@@ -104,6 +104,8 @@ export interface OutputVendor {
   name: OutputVendorName;
   init?: (outputVendorsConfig: Config['outputVendors']) => Promise<void>;
   exportTransactions: ExportTransactionsFunction;
+  // When true, the exporter also receives pending transactions and is responsible for updating them once completed
+  supportsPendingTransactions?: boolean;
 }
 
 export interface FinancialAccountDetails {
