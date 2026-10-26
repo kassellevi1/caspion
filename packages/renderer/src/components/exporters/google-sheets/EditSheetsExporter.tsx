@@ -80,7 +80,11 @@ const EditSheetsExporter: React.FC<EditSheetsExporterProps> = ({ handleSave, exp
             </Form.Group>
           </Form>
           <div className={styles.actionButtonsWrapper}>
-            <Button variant="primary" onClick={handleSaveClick} disabled={sendDisabled}>
+            <Button
+              variant="primary"
+              onClick={handleSaveClick}
+              disabled={sendDisabled || !sheetsConfig.options.spreadsheetId}
+            >
               שמור
             </Button>
           </div>
