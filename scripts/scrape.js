@@ -52,15 +52,19 @@ const preloadBuildLastModified = getBuildOutputModificationTime(resolve(projectR
 const mainNeedsRebuild = mainSourceLastModified > mainBuildLastModified;
 const preloadNeedsRebuild = preloadSourceLastModified > preloadBuildLastModified;
 
+// vite builds in production mode when MODE is unset, and a production build reads the config from the OS app data
+// folder instead of the local userData folder that the dev app (and every CLI scrape so far) uses
+const buildEnv = { ...process.env, MODE: process.env.MODE ?? 'development' };
+
 if (mainNeedsRebuild || preloadNeedsRebuild) {
   console.log('Source files changed, rebuilding...');
   if (mainNeedsRebuild) {
     console.log('Building main...');
-    execSync('yarn build:main', { stdio: 'inherit', cwd: projectRoot });
+    execSync('yarn build:main', { stdio: 'inherit', cwd: projectRoot, env: buildEnv });
   }
   if (preloadNeedsRebuild) {
     console.log('Building preload...');
-    execSync('yarn build:preload', { stdio: 'inherit', cwd: projectRoot });
+    execSync('yarn build:preload', { stdio: 'inherit', cwd: projectRoot, env: buildEnv });
   }
 } else {
   console.log('Build is up to date, skipping...');
