@@ -1,4 +1,5 @@
 import {
+  type AccountBalance,
   type Config,
   type EnrichedTransaction,
   type ExportTransactionsResult,
@@ -25,6 +26,7 @@ export async function createTransactionsInExternalVendors(
   startDate: Date,
   eventPublisher: EventPublisher,
   opLog?: OperationLogger,
+  balances: AccountBalance[] = [],
 ) {
   const log = opLog ?? createOperationLogger('export');
 
@@ -70,6 +72,7 @@ export async function createTransactionsInExternalVendors(
       const exportTransactionsResult = await outputVendor.exportTransactions(
         {
           transactionsToCreate,
+          balances,
           startDate,
           outputVendorsConfig,
         },

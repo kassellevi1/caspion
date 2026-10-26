@@ -1,5 +1,6 @@
 import { configFilePath, userDataPath } from '@/app-globals';
 import {
+  type AccountBalance,
   type AccountToScrapeConfig,
   type Config,
   type EnrichedTransaction,
@@ -9,6 +10,7 @@ import {
 import { getConfig } from '@/backend/configManager/configManager';
 import * as bankScraper from '@/backend/import/bankScraper';
 import Bottleneck from 'bottleneck';
+import { CompanyTypes } from 'israeli-bank-scrapers-core';
 import { type Transaction } from 'israeli-bank-scrapers-core/lib/transactions';
 import _ from 'lodash';
 import moment from 'moment';
@@ -28,6 +30,9 @@ import { createOperationLogger, type OperationLogger } from '/@/logging/operatio
 type ScrapingConfig = Config['scraping'];
 
 const DEFAULT_MAX_CONCURRENCY = 3;
+
+// Only bank accounts have a meaningful balance; credit card scrapers (e.g. max) report the used credit instead
+const COMPANIES_WITH_BALANCE: CompanyTypes[] = [CompanyTypes.discount];
 
 export async function scrapeFinancialAccountsAndFetchTransactions(
   scrapingConfig: ScrapingConfig,
@@ -69,7 +74,7 @@ export async function scrapeFinancialAccountsAndFetchTransactions(
   });
   const scrapePromises = activeAccounts.map(async (accountToScrape) => ({
     id: accountToScrape.id,
-    transactions: await limiter.schedule(() =>
+    ...(await limiter.schedule(() =>
       fetchTransactions(
         accountToScrape,
         startDate,
@@ -79,7 +84,7 @@ export async function scrapeFinancialAccountsAndFetchTransactions(
         scrapingConfig.timeout,
         log,
       ),
-    ),
+    )),
   }));
 
   const promiseResults = await Promise.allSettled(scrapePromises);
@@ -87,12 +92,14 @@ export async function scrapeFinancialAccountsAndFetchTransactions(
   let successCount = 0;
   let failedCount = 0;
   let totalTransactions = 0;
+  const balances: AccountBalance[] = [];
 
   const companyIdToTransactions = promiseResults.reduce(
     (idToTrxAcc, scrapeRes) => {
       if (scrapeRes.status === 'fulfilled') {
-        const { id, transactions } = scrapeRes.value;
+        const { id, transactions, balances: accountBalances } = scrapeRes.value;
         idToTrxAcc[id] = transactions;
+        balances.push(...accountBalances);
         successCount++;
         totalTransactions += transactions.length;
       } else {
@@ -112,7 +119,7 @@ export async function scrapeFinancialAccountsAndFetchTransactions(
     totalTransactions,
   });
 
-  return companyIdToTransactions;
+  return { companyIdToTransactions, balances };
 }
 
 function buildImporterEvent(
@@ -138,7 +145,7 @@ export async function getFinancialAccountDetails(): Promise<FinancialAccountDeta
 
   const startDate = moment().subtract(30, 'days').startOf('day').toDate();
 
-  const companyIdToTransactions = await scrapeFinancialAccountsAndFetchTransactions(
+  const { companyIdToTransactions } = await scrapeFinancialAccountsAndFetchTransactions(
     config.scraping,
     startDate,
     eventEmitter,
@@ -196,6 +203,7 @@ async function fetchTransactions(
     }
 
     const transactions = await postProcessTransactions(account, scrapeResult);
+    const balances = getAccountBalances(account, scrapeResult);
 
     // Calculate transaction date range for logging
     const txDates = transactions.map((t) => moment(t.date));
@@ -209,6 +217,7 @@ async function fetchTransactions(
       importer: account.key,
       transactionsFound: transactions.length,
       accountsCount: uniqueAccountsCount,
+      balancesFound: balances.length,
       dateRange: `${oldestTx} to ${newestTx}`,
       duration: `${Date.now() - importerStartTime}ms`,
     });
@@ -221,7 +230,7 @@ async function fetchTransactions(
       }),
     );
 
-    return transactions;
+    return { transactions, balances };
   } catch (e) {
     const error = e as Error;
     opLog.error('IMPORTER_FAILED', error, {
@@ -258,6 +267,18 @@ async function postProcessTransactions(
     return transactions;
   }
   return [];
+}
+
+function getAccountBalances(
+  accountToScrape: AccountToScrapeConfig,
+  scrapeResult: ScraperScrapingResult,
+): AccountBalance[] {
+  if (!COMPANIES_WITH_BALANCE.includes(accountToScrape.key) || !scrapeResult.accounts) {
+    return [];
+  }
+  return scrapeResult.accounts
+    .filter(({ balance }) => typeof balance === 'number')
+    .map(({ accountNumber, balance }) => ({ companyId: accountToScrape.key, accountNumber, balance: balance! }));
 }
 
 function enrichTransaction(transaction: Transaction, companyId: string, accountNumber: string): EnrichedTransaction {

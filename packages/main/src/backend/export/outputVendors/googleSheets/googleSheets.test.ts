@@ -1,6 +1,6 @@
 import { type EnrichedTransaction } from '@/backend/commonTypes';
 import { describe, expect, test } from 'vitest';
-import { getPendingRowChanges } from './googleSheets';
+import { getBalanceRowChanges, getPendingRowChanges } from './googleSheets';
 
 const START_DATE = new Date('2026-10-01T00:00:00.000Z');
 
@@ -65,5 +65,35 @@ describe('getPendingRowChanges', () => {
     );
 
     expect(result).toEqual({ rowsToComplete: [], rowIndexesToDelete: [] });
+  });
+});
+
+describe('getBalanceRowChanges', () => {
+  const NOW = new Date(2026, 9, 26, 9, 30);
+  const balance = { companyId: 'discount', accountNumber: '0123456', balance: -1520.4 };
+
+  test('appends a row for an account without a row for today', () => {
+    const result = getBalanceRowChanges(['מפתח - לא לגעת', '2026-10-25_discount_0123456'], [balance], NOW);
+
+    expect(result).toEqual({
+      rowsToUpdate: [],
+      rowsToAppend: [['2026-10-26', 'discount', '0123456', -1520.4, '2026-10-26 09:30', '2026-10-26_discount_0123456']],
+    });
+  });
+
+  test("overwrites today's row of the same account on a later run", () => {
+    const result = getBalanceRowChanges(
+      ['מפתח - לא לגעת', '2026-10-26_discount_999', '2026-10-26_discount_0123456'],
+      [balance],
+      NOW,
+    );
+
+    expect(result.rowsToAppend).toEqual([]);
+    expect(result.rowsToUpdate).toEqual([
+      {
+        rowIndex: 2,
+        values: ['2026-10-26', 'discount', '0123456', -1520.4, '2026-10-26 09:30', '2026-10-26_discount_0123456'],
+      },
+    ]);
   });
 });

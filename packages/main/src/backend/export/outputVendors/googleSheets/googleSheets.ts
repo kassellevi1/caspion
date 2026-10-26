@@ -1,5 +1,6 @@
 import {
   OutputVendorName,
+  type AccountBalance,
   type EnrichedTransaction,
   type ExportTransactionsFunction,
   type OutputVendor,
@@ -33,6 +34,11 @@ const PROCESSED_DATE_COLUMN = 'J';
 const STATUS_COLUMN = 'M';
 const TRANSACTION_STATUS_PENDING = 'pending';
 const TRANSACTION_STATUS_COMPLETED = 'completed';
+
+const BALANCE_SHEET_NAME = 'balance';
+const BALANCE_COLUMN_HEADERS = ['תאריך', 'חברה', 'מספר חשבון', 'יתרה', 'עודכן', 'מפתח - לא לגעת'];
+const BALANCE_KEY_COLUMN = 'F';
+const BALANCE_UPDATED_AT_FORMAT = 'YYYY-MM-DD HH:mm';
 
 // The hash is `${date}_${chargedAmount}_${description}_${memo}_${companyId}_${accountNumber}` (see calculateTransactionHash)
 const getHashDate = (hash: string) => moment(hash.split('_')[0], moment.ISO_8601, true);
@@ -81,8 +87,63 @@ export function getPendingRowChanges(
   return { rowsToComplete, rowIndexesToDelete };
 }
 
+/**
+ * Keeps one row per account per day in the balance sheet: the first run of the day appends a row,
+ * later runs on the same day overwrite it with the latest balance.
+ */
+export function getBalanceRowChanges(existingKeys: string[], balances: AccountBalance[], now: Date) {
+  const date = moment(now).format(GOOGLE_SHEETS_DATE_FORMAT);
+  const updatedAt = moment(now).format(BALANCE_UPDATED_AT_FORMAT);
+
+  const rowsToUpdate: { rowIndex: number; values: unknown[] }[] = [];
+  const rowsToAppend: unknown[][] = [];
+
+  balances.forEach(({ companyId, accountNumber, balance }) => {
+    const key = `${date}_${companyId}_${accountNumber}`;
+    const values = [date, companyId, accountNumber, balance, updatedAt, key];
+    const rowIndex = existingKeys.indexOf(key);
+    if (rowIndex === -1) {
+      rowsToAppend.push(values);
+    } else {
+      rowsToUpdate.push({ rowIndex, values });
+    }
+  });
+
+  return { rowsToUpdate, rowsToAppend };
+}
+
+async function exportBalances(spreadsheetId: string, balances: AccountBalance[], auth: googleSheets.OAuth2Client) {
+  if (balances.length === 0) {
+    return;
+  }
+
+  if (!(await googleSheets.getSheet(spreadsheetId, BALANCE_SHEET_NAME, auth))) {
+    logAppEvent('GOOGLE_SHEETS_CREATING_BALANCE_SHEET');
+    await googleSheets.addSheet(spreadsheetId, BALANCE_SHEET_NAME, auth);
+    await googleSheets.appendToSpreadsheet(spreadsheetId, `${BALANCE_SHEET_NAME}!A:A`, [BALANCE_COLUMN_HEADERS], auth);
+  }
+
+  const existingKeys = await googleSheets.getColumnValues(spreadsheetId, BALANCE_SHEET_NAME, BALANCE_KEY_COLUMN, auth);
+  const { rowsToUpdate, rowsToAppend } = getBalanceRowChanges(existingKeys, balances, new Date());
+
+  logAppEvent('GOOGLE_SHEETS_EXPORTING_BALANCES', { updated: rowsToUpdate.length, appended: rowsToAppend.length });
+  if (rowsToUpdate.length) {
+    await googleSheets.updateCells(
+      spreadsheetId,
+      rowsToUpdate.map(({ rowIndex, values }) => ({
+        range: `${BALANCE_SHEET_NAME}!A${rowIndex + 1}`,
+        values: [values],
+      })),
+      auth,
+    );
+  }
+  if (rowsToAppend.length) {
+    await googleSheets.appendToSpreadsheet(spreadsheetId, `${BALANCE_SHEET_NAME}!A:A`, rowsToAppend, auth);
+  }
+}
+
 const createTransactionsInGoogleSheets: ExportTransactionsFunction = async (
-  { transactionsToCreate: transactions, startDate, outputVendorsConfig },
+  { transactionsToCreate: transactions, balances, startDate, outputVendorsConfig },
   eventPublisher,
 ) => {
   const startTime = Date.now();
@@ -146,40 +207,40 @@ const createTransactionsInGoogleSheets: ExportTransactionsFunction = async (
 
   if (transactionsToCreate.length === 0) {
     await emitProgressEvent(eventPublisher, transactions, 'All transactions already exist in google sheets');
-    return {
-      exportedTransactionsNum: 0,
-    };
+  } else {
+    await emitProgressEvent(
+      eventPublisher,
+      transactions,
+      `Creating ${transactionsToCreate.length} transactions in google sheets`,
+    );
+
+    const transactionsInSheetsFormat = transactionsToCreate.map((transaction) => [
+      moment(transaction.date).format(GOOGLE_SHEETS_DATE_FORMAT),
+      transaction.chargedAmount,
+      transaction.description,
+      transaction.memo,
+      transaction.category,
+      transaction.accountNumber,
+      transaction.hash,
+      transaction.originalCurrency,
+      transaction.originalAmount,
+      moment(transaction.processedDate).format(GOOGLE_SHEETS_DATE_FORMAT),
+      transaction.identifier,
+      transaction.type,
+      transaction.status,
+    ]);
+
+    logAppEvent('GOOGLE_SHEETS_APPENDING_DATA', { rowCount: transactionsInSheetsFormat.length });
+    await googleSheets.appendToSpreadsheet(
+      spreadsheetId,
+      `${DEFAULT_SHEET_NAME}!A:A`,
+      transactionsInSheetsFormat,
+      oAuthClient,
+    );
   }
 
-  await emitProgressEvent(
-    eventPublisher,
-    transactions,
-    `Creating ${transactionsToCreate.length} transactions in google sheets`,
-  );
-
-  const transactionsInSheetsFormat = transactionsToCreate.map((transaction) => [
-    moment(transaction.date).format(GOOGLE_SHEETS_DATE_FORMAT),
-    transaction.chargedAmount,
-    transaction.description,
-    transaction.memo,
-    transaction.category,
-    transaction.accountNumber,
-    transaction.hash,
-    transaction.originalCurrency,
-    transaction.originalAmount,
-    moment(transaction.processedDate).format(GOOGLE_SHEETS_DATE_FORMAT),
-    transaction.identifier,
-    transaction.type,
-    transaction.status,
-  ]);
-
-  logAppEvent('GOOGLE_SHEETS_APPENDING_DATA', { rowCount: transactionsInSheetsFormat.length });
-  await googleSheets.appendToSpreadsheet(
-    spreadsheetId,
-    `${DEFAULT_SHEET_NAME}!A:A`,
-    transactionsInSheetsFormat,
-    oAuthClient,
-  );
+  // After the transactions, so a balance sheet problem never blocks exporting them
+  await exportBalances(spreadsheetId, balances, oAuthClient);
 
   logAppEvent('GOOGLE_SHEETS_SUCCESS', {
     createdCount: transactionsToCreate.length,

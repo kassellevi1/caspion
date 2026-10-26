@@ -69,7 +69,7 @@ export async function scrapeAndUpdateOutputVendors(config: Config, optionalEvent
     // downloading chromium, scraping, and export (YNAB API calls)
     await initProxyIfNeeded();
 
-    const companyIdToTransactions = await scrapeFinancialAccountsAndFetchTransactions(
+    const { companyIdToTransactions, balances } = await scrapeFinancialAccountsAndFetchTransactions(
       config.scraping,
       startDate,
       eventPublisher,
@@ -86,6 +86,7 @@ export async function scrapeAndUpdateOutputVendors(config: Config, optionalEvent
         startDate,
         eventPublisher,
         exportLog,
+        balances,
       );
     } catch (e) {
       const error = e as Error;

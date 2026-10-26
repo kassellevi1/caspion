@@ -85,8 +85,15 @@ export interface EnrichedTransaction extends Transaction {
   hash: string;
 }
 
+export interface AccountBalance {
+  companyId: string;
+  accountNumber: string;
+  balance: number;
+}
+
 export interface ExportTransactionsParams {
   transactionsToCreate: EnrichedTransaction[];
+  balances: AccountBalance[];
   startDate: Date;
   outputVendorsConfig: Config['outputVendors'];
 }

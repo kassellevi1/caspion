@@ -56,6 +56,28 @@ export async function getExistingRows(
   return hashes.map((hash, rowIndex) => ({ rowIndex, hash, status: statuses[rowIndex] ?? '' }));
 }
 
+export async function getColumnValues(
+  spreadsheetId: string,
+  sheetName: string,
+  column: string,
+  auth: OAuth2Client,
+): Promise<string[]> {
+  const result = await sheets.spreadsheets.values.get({
+    auth,
+    spreadsheetId,
+    range: `${sheetName}!${column}:${column}`,
+  });
+  return (result.data.values ?? []).map((row) => String(row[0] ?? ''));
+}
+
+export async function addSheet(spreadsheetId: string, sheetTitle: string, auth: OAuth2Client) {
+  return sheets.spreadsheets.batchUpdate({
+    auth,
+    spreadsheetId,
+    requestBody: { requests: [{ addSheet: { properties: { title: sheetTitle } } }] },
+  });
+}
+
 export async function updateCells(
   spreadsheetId: string,
   data: { range: string; values: unknown[][] }[],
