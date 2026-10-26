@@ -67,3 +67,6 @@ transaction.csv
 
 # local cache
 /userData
+
+# Log of scheduled `yarn scrape` runs
+scrape.log
